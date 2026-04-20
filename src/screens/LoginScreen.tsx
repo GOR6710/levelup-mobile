@@ -7,60 +7,81 @@ import {
   StyleSheet,
   SafeAreaView,
   StatusBar,
-  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { LevelUpAPI } from '../api/client';
-
-const API_BASE_URL = 'http://localhost:3000/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface LoginScreenProps {
   onLoginSuccess: () => void;
 }
 
+const API_BASE_URL = 'http://localhost:3000/api';
+
 export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
-  const [isLogin, setIsLogin] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
 
-  const api = new LevelUpAPI(API_BASE_URL, () => null);
-
-  const handleSubmit = async () => {
-    if (!email || !password || (!isLogin && !username)) {
-      alert('请填写所有字段');
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('错误', '请填写邮箱和密码');
       return;
     }
 
-    setIsLoading(true);
-
+    setLoading(true);
     try {
-      const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const body = isLogin 
-        ? { email, password }
-        : { email, password, username };
-
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ email, password }),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        // Store tokens (in real app, use secure storage)
-        // await SecureStorage.setItem('accessToken', data.data.tokens.accessToken);
-        // await SecureStorage.setItem('refreshToken', data.data.tokens.refreshToken);
-        
+        await AsyncStorage.setItem('accessToken', data.data.tokens.accessToken);
+        await AsyncStorage.setItem('refreshToken', data.data.tokens.refreshToken);
         onLoginSuccess();
       } else {
-        alert(data.error || '操作失败');
+        Alert.alert('登录失败', data.error || '请检查邮箱和密码');
       }
     } catch (error) {
-      alert('网络错误');
+      Alert.alert('错误', '网络请求失败');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!email || !password || !username) {
+      Alert.alert('错误', '请填写所有字段');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, username, password }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        await AsyncStorage.setItem('accessToken', data.data.tokens.accessToken);
+        await AsyncStorage.setItem('refreshToken', data.data.tokens.refreshToken);
+        Alert.alert('成功', '注册成功！');
+        onLoginSuccess();
+      } else {
+        Alert.alert('注册失败', data.error || '请重试');
+      }
+    } catch (error) {
+      Alert.alert('错误', '网络请求失败');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -69,17 +90,17 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       <StatusBar barStyle="light-content" backgroundColor="#0a1628" />
       
       <View style={styles.content}>
-        <Text style={styles.title}>LevelUp</Text>
-        <Text style={styles.subtitle}>
-          {isLogin ? '登录开始你的升级之旅' : '注册新账号'}
-        </Text>
+        <View style={styles.header}>
+          <Text style={styles.title}>LevelUp</Text>
+          <Text style={styles.subtitle}>{isRegister ? '创建账号' : '登录'}</Text>
+        </View>
 
         <View style={styles.form}>
-          {!isLogin && (
+          {isRegister && (
             <TextInput
               style={styles.input}
               placeholder="用户名"
-              placeholderTextColor="#888"
+              placeholderTextColor="#666"
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
@@ -89,7 +110,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           <TextInput
             style={styles.input}
             placeholder="邮箱"
-            placeholderTextColor="#888"
+            placeholderTextColor="#666"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
@@ -99,35 +120,31 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           <TextInput
             style={styles.input}
             placeholder="密码"
-            placeholderTextColor="#888"
+            placeholderTextColor="#666"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
           />
 
           <TouchableOpacity
-            style={styles.button}
-            onPress={handleSubmit}
-            disabled={isLoading}
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={isRegister ? handleRegister : handleLogin}
+            disabled={loading}
           >
-            {isLoading ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={styles.buttonText}>
-                {isLogin ? '登录' : '注册'}
-              </Text>
-            )}
+            <Text style={styles.buttonText}>
+              {loading ? '加载中...' : isRegister ? '注册' : '登录'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.switchButton}
+            onPress={() => setIsRegister(!isRegister)}
+          >
+            <Text style={styles.switchText}>
+              {isRegister ? '已有账号？去登录' : '没有账号？去注册'}
+            </Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          style={styles.switchButton}
-          onPress={() => setIsLogin(!isLogin)}
-        >
-          <Text style={styles.switchText}>
-            {isLogin ? '还没有账号？点击注册' : '已有账号？点击登录'}
-          </Text>
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -143,30 +160,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  header: {
+    alignItems: 'center',
+    marginBottom: 48,
+  },
   title: {
     fontSize: 36,
     fontWeight: 'bold',
     color: '#00d4ff',
-    textAlign: 'center',
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 18,
     color: '#888',
-    textAlign: 'center',
-    marginBottom: 40,
   },
   form: {
     gap: 16,
   },
   input: {
     backgroundColor: '#0f2642',
-    borderWidth: 1,
-    borderColor: '#1e3a5f',
     borderRadius: 12,
     padding: 16,
     color: '#fff',
     fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#1e3a5f',
   },
   button: {
     backgroundColor: '#00d4ff',
@@ -175,14 +193,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
   buttonText: {
     color: '#000',
     fontSize: 16,
     fontWeight: 'bold',
   },
   switchButton: {
-    marginTop: 24,
     alignItems: 'center',
+    marginTop: 16,
   },
   switchText: {
     color: '#00d4ff',

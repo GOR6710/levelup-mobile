@@ -7,22 +7,108 @@ import {
   ScrollView,
   SafeAreaView,
   StatusBar,
+  RefreshControl,
 } from 'react-native';
-import { LevelUpAPI } from '../api/client';
-import type { Task, UserStats, Stat } from '../types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// SDK Types
+interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  type: 'main' | 'daily' | 'side';
+  difficulty: 'easy' | 'medium' | 'hard';
+  xp: number;
+  completed: boolean;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface UserStats {
+  level: number;
+  currentXP: number;
+  maxXP: number;
+  totalPower: number;
+  achievementsCount: number;
+  streakDays: number;
+}
+
+interface Stat {
+  name: string;
+  value: number;
+  maxValue: number;
+  icon: string;
+  color: string;
+}
+
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
 
 const API_BASE_URL = 'http://localhost:3000/api';
 
-export default function DashboardScreen() {
+// Simple API client for React Native
+class LevelUpAPI {
+  private baseURL: string;
+
+  constructor(baseURL: string) {
+    this.baseURL = baseURL;
+  }
+
+  private async getToken(): Promise<string | null> {
+    return await AsyncStorage.getItem('accessToken');
+  }
+
+  private async request<T>(endpoint: string, options: any = {}): Promise<ApiResponse<T>> {
+    try {
+      const token = await this.getToken();
+      const response = await fetch(`${this.baseURL}${endpoint}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
+          ...options.headers,
+        },
+      });
+
+      const data = await response.json();
+      return data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async getTasks(): Promise<ApiResponse<Task[]>> {
+    return this.request('/tasks');
+  }
+
+  async completeTask(id: string): Promise<ApiResponse<Task>> {
+    return this.request('/tasks', {
+      method: 'PUT',
+      body: JSON.stringify({ id, updates: { completed: true, completedAt: new Date().toISOString() } }),
+    });
+  }
+
+  async getStats(): Promise<ApiResponse<{ userStats: UserStats; stats: Stat[] }>> {
+    return this.request('/stats');
+  }
+}
+
+interface DashboardScreenProps {
+  onLogout: () => void;
+}
+
+export default function DashboardScreen({ onLogout }: DashboardScreenProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<Stat[]>([]);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const api = new LevelUpAPI(API_BASE_URL, () => {
-    // TODO: Get token from secure storage
-    return null;
-  });
+  const api = new LevelUpAPI(API_BASE_URL);
 
   useEffect(() => {
     loadData();
@@ -30,6 +116,7 @@ export default function DashboardScreen() {
 
   const loadData = async () => {
     try {
+      setLoading(true);
       const [tasksRes, statsRes] = await Promise.all([
         api.getTasks(),
         api.getStats(),
@@ -47,6 +134,28 @@ export default function DashboardScreen() {
       console.error('Failed to load data:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
+
+  const handleCompleteTask = async (taskId: string) => {
+    const result = await api.completeTask(taskId);
+    if (result.success) {
+      loadData();
+    }
+  };
+
+  const getTaskTypeColor = (type: string) => {
+    switch (type) {
+      case 'main': return '#ff6b6b';
+      case 'daily': return '#4ecdc4';
+      case 'side': return '#ffe66d';
+      default: return '#888';
     }
   };
 
@@ -75,29 +184,25 @@ export default function DashboardScreen() {
     <TouchableOpacity
       key={task.id}
       style={[styles.taskCard, task.completed && styles.taskCompleted]}
+      onPress={() => !task.completed && handleCompleteTask(task.id)}
     >
       <View style={styles.taskHeader}>
-        <Text style={styles.taskTitle}>{task.title}</Text>
+        <Text style={[styles.taskTitle, task.completed && styles.taskTitleCompleted]}>
+          {task.title}
+        </Text>
         <View style={[styles.taskType, { backgroundColor: getTaskTypeColor(task.type) }]}>
-          <Text style={styles.taskTypeText}>{task.type}</Text>
+          <Text style={styles.taskTypeText}>{task.type.toUpperCase()}</Text>
         </View>
       </View>
-      <Text style={styles.taskDescription}>{task.description}</Text>
+      {task.description && (
+        <Text style={styles.taskDescription}>{task.description}</Text>
+      )}
       <View style={styles.taskFooter}>
         <Text style={styles.taskXP}>+{task.xp} XP</Text>
         <Text style={styles.taskDifficulty}>{task.difficulty}</Text>
       </View>
     </TouchableOpacity>
   );
-
-  const getTaskTypeColor = (type: string) => {
-    switch (type) {
-      case 'main': return '#ff6b6b';
-      case 'daily': return '#4ecdc4';
-      case 'side': return '#ffe66d';
-      default: return '#888';
-    }
-  };
 
   if (loading) {
     return (
@@ -114,14 +219,24 @@ export default function DashboardScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>LevelUp</Text>
-        {userStats && (
-          <View style={styles.levelBadge}>
-            <Text style={styles.levelText}>Lv.{userStats.level}</Text>
-          </View>
-        )}
+        <View style={styles.headerRight}>
+          {userStats && (
+            <View style={styles.levelBadge}>
+              <Text style={styles.levelText}>Lv.{userStats.level}</Text>
+            </View>
+          )}
+          <TouchableOpacity onPress={onLogout} style={styles.logoutButton}>
+            <Text style={styles.logoutText}>退出</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView 
+        style={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00d4ff" />
+        }
+      >
         {/* Stats Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>属性</Text>
@@ -147,20 +262,20 @@ export default function DashboardScreen() {
                 ]}
               />
             </View>
+            <View style={styles.xpFooter}>
+              <Text style={styles.xpFooterText}>🔥 连续 {userStats.streakDays} 天</Text>
+              <Text style={styles.xpFooterText}>⚡ 战力 {userStats.totalPower}</Text>
+              <Text style={styles.xpFooterText}>🏆 成就 {userStats.achievementsCount}</Text>
+            </View>
           </View>
         )}
 
         {/* Tasks Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>任务</Text>
+          <Text style={styles.sectionTitle}>任务 (点击完成)</Text>
           {tasks.map(renderTask)}
         </View>
       </ScrollView>
-
-      {/* Add Task Button */}
-      <TouchableOpacity style={styles.fab}>
-        <Text style={styles.fabText}>+</Text>
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -190,6 +305,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#00d4ff',
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   levelBadge: {
     backgroundColor: '#00d4ff',
     paddingHorizontal: 12,
@@ -199,6 +319,14 @@ const styles = StyleSheet.create({
   levelText: {
     color: '#000',
     fontWeight: 'bold',
+  },
+  logoutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  logoutText: {
+    color: '#ff6b6b',
+    fontSize: 14,
   },
   content: {
     flex: 1,
@@ -280,6 +408,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#00d4ff',
     borderRadius: 6,
   },
+  xpFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  xpFooterText: {
+    color: '#888',
+    fontSize: 12,
+  },
   taskCard: {
     backgroundColor: '#0f2642',
     borderRadius: 12,
@@ -289,7 +426,8 @@ const styles = StyleSheet.create({
     borderColor: '#1e3a5f',
   },
   taskCompleted: {
-    opacity: 0.6,
+    opacity: 0.5,
+    backgroundColor: '#1a3a5f',
   },
   taskHeader: {
     flexDirection: 'row',
@@ -303,6 +441,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     flex: 1,
   },
+  taskTitleCompleted: {
+    textDecorationLine: 'line-through',
+    color: '#888',
+  },
   taskType: {
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -312,7 +454,6 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 12,
     fontWeight: 'bold',
-    textTransform: 'uppercase',
   },
   taskDescription: {
     color: '#888',
@@ -329,26 +470,5 @@ const styles = StyleSheet.create({
   taskDifficulty: {
     color: '#888',
     textTransform: 'capitalize',
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#00d4ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#00d4ff',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-  },
-  fabText: {
-    fontSize: 24,
-    color: '#000',
-    fontWeight: 'bold',
   },
 });
